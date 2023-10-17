@@ -1,0 +1,583 @@
+﻿<html>
+	<head>
+		<title>Three.JS 3D Object Visualizer</title>
+        <meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body { margin: 0; overflow: hidden; }
+			canvas { width: 100%; height: 100%; }
+
+			div#standardMessage {
+				position: absolute;
+				padding-top: 10px;
+				padding-left: 10px;
+				color: black;
+				font-family: Consolas, serif;
+				pointer-events:none;
+			}
+
+			div#helpMessage {
+				position: absolute;
+				padding-top: 30px;
+				padding-left: 10px;
+				color: black;
+				font-family: Consolas, serif;
+				pointer-events:none;
+			}
+
+			div#helpMessage.hide { visibility: hidden; }
+		</style>
+	</head>
+	<body>
+		<div id = "standardMessage">Click [H] to display the help text.</div>
+		<div id = "helpMessage" class="hide">Rotate Cube/Model using [1], [2], [3] (-x, -y, -z axis)<br>
+			Change Render Mode using [E], [V], [F] (for Edges, Vertices, Face)<br>
+			Move the Camera using [W], [A], [S], [D] and the up/down arrow keys<br>
+			Click [R] to reset the Camera and [0] to reset the Cube/Model's rotation<br>
+			Toggle between the Cube/Model Modes by clicking [M]<br>
+			Hold [N] to show the Cube's outline and the Model inside it<br>
+			Toggle between Day/Night Modes by clicking [L]</div>
+
+		<script src="three.js"></script>
+		<script src="OBJloader.js"></script>
+		<script type="module">
+            "use strict"; // https://stackoverflow.com/q/1335851/72470
+			import {GLTFLoader} from 'https://threejsfundamentals.org/threejs/resources/threejs/r122/examples/jsm/loaders/GLTFLoader.js';
+			// Global variables that are available in all functions.
+
+			let camera, viewPoint = new THREE.Vector3(0, 0, 0), scene, renderer, outline, mesh, cube, edges, vertices, model,
+					modelEdges, modelVertices;
+
+			// Instantiate lights and set their positions:
+			let defaultLight = new THREE.AmbientLight(0xffffff, 0.25),
+				dayLights = {
+					lightOne: new THREE.PointLight(0xffffff, 0.75),
+					lightTwo: new THREE.PointLight(0xffffcc, 0.50),
+				},
+				nightLights = {
+					lightOne: new THREE.PointLight(0xff6600, 1),
+					lightTwo: new THREE.PointLight(0xff3300, 0.75)
+				};
+			dayLights.lightOne.position.set(5, 50, 5);
+			dayLights.lightTwo.position.set(-5, -5, 0);
+			nightLights.lightOne.position.set(5, 50, 5);
+			nightLights.lightTwo.position.set(-5, -5, 0);
+			dayLights.lightOne.castShadow = true; dayLights.lightTwo.castShadow = true;
+			nightLights.lightOne.castShadow = true; nightLights.lightTwo.castShadow = true;
+
+			// Define camera, rotation, and mode controls:
+			let camContr = {
+				forwardVector: false, backwardVector: false, // W, S
+				leftVector: false, rightVector: false, // A, D
+				upVector: false, downVector: false // Up/Down Keys
+			}, rotDirection = {xAxis: false, yAxis: false, zAxis: false}, // 1, 2, 3
+			   modelView = false, lightMode = false, // [M] Model and [L] light modes default values
+			   helpText = false; // [H] Display help text
+
+			// Declare new objects here
+			let daySkybox, nightSkybox, plane, ctrPlane, island, planeAngle = 0, ctrPlaneAngle = 0,
+					planeSpeed = 0.0025, ctrPlaneSpeed = 0.003, planeDistance = 10, ctrPlaneDistance = 15;
+
+			const camSpeed = 0.1, rotSpeed = 0.025;
+
+            // Initialise the scene, and draw it for the first time.
+            init();
+			animate();
+
+            // Listen for keyboard events, to react to them.
+            document.addEventListener('keydown', handleKeyDown);
+            document.addEventListener('keyup', handleKeyRelease);
+            document.addEventListener('mousedown', handleMouseDown);
+			document.addEventListener('mouseup', handleMouseRelease);
+			document.addEventListener('mousemove', handleMouseMovement);
+			document.addEventListener('wheel', onScroll);
+
+			// Scene initialisation. This function is only run once, at the very beginning.
+            function init()
+            {
+                scene = new THREE.Scene();
+
+                // Set up the camera, move it to (3, 4, 5) and look at the origin (0, 0, 0).
+                camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+                camera.position.set(6, 8, 10);
+                camera.lookAt(new THREE.Vector3(0, 0, 0));
+
+				// Draw a helper grid in the x-z plane (note: y is up).
+                scene.add(new THREE.GridHelper(10, 20, 0xffffff));
+
+                // TO DO: Draw a cube (requirement 1).
+				drawCube(); // Draw the cube
+				drawModel(); // Draw the model (bunny)
+
+				drawSkybox(); // Draw the two different sky-boxes (cubes)
+				drawOtherModels(); // Draw other models (Island, planes)
+
+                // TO DO: Visualise the axes of the global coordinate system (requirement 2).
+				drawAxes();
+
+				scene.add(defaultLight);
+				toggleLighting(); // Add more complex lighting (Requirement 4)
+
+                // Set up the Web GL renderer.
+                renderer = new THREE.WebGLRenderer({ antialias: true });
+				renderer.setPixelRatio(window.devicePixelRatio); // HiDPI/retina rendering
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                document.body.appendChild(renderer.domElement);
+
+                // Handle resizing of the browser window.
+				window.addEventListener('resize', handleResize, false);
+            }
+
+            function toggleLighting() {
+            	if (lightMode) { // Night mode
+					scene.remove(daySkybox);
+					scene.remove(dayLights.lightOne);
+					scene.remove(dayLights.lightTwo);
+					scene.add(nightSkybox);
+					scene.add(nightLights.lightOne);
+					scene.add(nightLights.lightTwo);
+				} else {
+					scene.add(daySkybox);
+					scene.add(dayLights.lightOne);
+					scene.add(dayLights.lightTwo);
+					scene.remove(nightSkybox);
+					scene.remove(nightLights.lightOne);
+					scene.remove(nightLights.lightTwo);
+				}
+			}
+
+            // Create cube, map different textures, and setup different render modes (Requirement 1, 4 and 7)
+            function drawCube() {
+				const cubeGeometry = new THREE.BoxGeometry(2, 2, 2); // Create 2x2x2 cube, corner points: (-1,-1,-1) and (1,1,1)
+				const textureLoader = new THREE.TextureLoader(); // Used to load in the textures.
+				const material = [
+					new THREE.MeshPhongMaterial({map: textureLoader.load('resources/cube/right.png')}),
+					new THREE.MeshPhongMaterial({map: textureLoader.load('resources/cube/left.png')}),
+					new THREE.MeshPhongMaterial({map: textureLoader.load('resources/cube/top.png')}),
+					new THREE.MeshPhongMaterial({map: textureLoader.load('resources/cube/bottom.png')}),
+					new THREE.MeshPhongMaterial({map: textureLoader.load('resources/cube/face.png')}),
+					new THREE.MeshPhongMaterial({map: textureLoader.load('resources/cube/back.png')})
+				]; // Material with textures (Requirement 7)
+				cube = new THREE.Mesh(cubeGeometry, material); // (Requirement 1)
+				cube.castShadow = true; cube.receiveShadow = true;
+				scene.add(cube);
+				// (Requirement 4):
+				// Setup edges render mode:
+				edges = new THREE.LineSegments(new THREE.WireframeGeometry(cubeGeometry), new THREE.LineBasicMaterial({color: 0xffffff})); // (Requirement 4) Used to generate edge render mode
+				edges.castShadow = true; edges.receiveShadow = true;
+				// Setup vertices render mode:
+				vertices = new THREE.Points(cubeGeometry, new THREE.PointsMaterial({size: 0.1, color: 0xcc00ff}));
+				vertices.castShadow = true; vertices.receiveShadow = true;
+				outline = new THREE.LineSegments(new THREE.EdgesGeometry(cubeGeometry), new THREE.LineBasicMaterial({color: 0xffffff}));
+				outline.castShadow = true; outline.receiveShadow = true;
+            }
+
+			function drawModel() {
+				const objLoader = new THREE.OBJLoader();
+				objLoader.load('resources/bunny-5000.obj', function (object){
+					const modelGeometry = object.children[0].geometry; // get the geometry of the model
+					modelGeometry.scale(.5, .5, .5); // Scale it to fit inside of the cube
+					modelGeometry.translate(-.5, 0, 0); // Translate it so that no parts are outside of the cube
+					model = new THREE.Mesh(modelGeometry, new THREE.MeshPhongMaterial({ color: 0xcc99ff }));
+					model.castShadow = true; model.receiveShadow = true;
+					modelEdges = new THREE.LineSegments(new THREE.WireframeGeometry(modelGeometry), new THREE.LineBasicMaterial({color: 0xffffff}));
+					modelEdges.castShadow = true; modelEdges.receiveShadow = true;
+					modelVertices = new THREE.Points(modelGeometry, new THREE.PointsMaterial({size: 0.02, color: 0xcc00ff}));
+					modelVertices.castShadow = true; modelVertices.receiveShadow = true;
+				}, function (xhr) {console.log( ( xhr.loaded / xhr.total * 100 ) + '% loaded' );}, // Show progress
+				function (error) {console.log( 'An error happened' );}); // Detect errors
+			}
+
+			function drawOtherModels() {
+				const loader = new GLTFLoader();
+				https://sketchfab.com/3d-models/the-russian-sukhoi-su-25-grach-single-seat-g-r-ad33de7fd44c444a8a23790c8757cf30
+				loader.load('resources/plane/scene.gltf', function (object) {
+					plane = object.scene;
+					plane.scale.set(1/6.5,1/6.5,1/6.5);
+					plane.translateOnAxis(new THREE.Vector3(1, 0, 0), 3);
+					plane.castShadow = true; plane.receiveShadow = true;
+					scene.add(plane);
+					},
+					function (xhr) {console.log( ( xhr.loaded / xhr.total * 100 ) + '% loaded' );},
+					function (error) {console.log( 'An error happened' );}
+				);
+
+				// https://sketchfab.com/3d-models/f-14-tomcat-top-gun-gear-up-downloadable-9d2d0c87539046aa8c2198fcc47cdcf8
+				loader.load('resources/ctr_plane/scene.gltf', function (object) {
+							ctrPlane = object.scene;
+							ctrPlane.scale.set(1/125,1/125,1/125);
+							ctrPlane.translateOnAxis(new THREE.Vector3(1, 0, 0), -2);
+							ctrPlane.rotateOnAxis(new THREE.Vector3(0, 1, 0), Math.PI/2);
+							ctrPlane.castShadow = true; ctrPlane.receiveShadow = true;
+							scene.add(ctrPlane);
+						},
+						function (xhr) {console.log((xhr.loaded / xhr.total * 100) + '% loaded' );},
+						function (error) {console.log('An error happened');}
+				);
+
+				loader.load('resources/island/scene.gltf', function (object) { // https://sketchfab.com/3d-models/map-gta5-f622784b2fa9453fb20821afb74a9cb6#download
+							island = object.scene;
+							island.scale.set(1/100,1/100,1/100);
+							island.translateOnAxis(new THREE.Vector3(0, 1, 0), -20);
+							island.castShadow = true; island.receiveShadow = true;
+							scene.add(island);
+						},
+						function (xhr) {console.log((xhr.loaded / xhr.total * 100) + '% loaded' );},
+						function (error) {console.log( 'An error happened' );}
+				);
+			}
+
+			function drawSkybox() {
+            	const skyboxGeometry = new THREE.BoxGeometry(200, 70, 200);
+            	const daySkyboxMaterial = new THREE.MeshBasicMaterial({color: 0x0099ff});
+				daySkyboxMaterial.side = THREE.BackSide;
+				const nightSkyboxMaterial = new THREE.MeshBasicMaterial({color: 0x000099});
+				nightSkyboxMaterial.side = THREE.BackSide;
+				daySkybox = new THREE.Mesh(skyboxGeometry, daySkyboxMaterial);
+				nightSkybox = new THREE.Mesh(skyboxGeometry, nightSkyboxMaterial);
+			}
+
+			// Create axes (Requirement 2)
+			function drawAxes() {
+            	// Make X Axis
+            	var points = [(new THREE.Vector3(0, 0, 0)), (new THREE.Vector3(5, 0, 0))];
+				var geometry = new THREE.BufferGeometry().setFromPoints(points);
+				var material = new THREE.LineBasicMaterial( { color: 0xff0000 } );
+				const xAxis = new THREE.Line(geometry, material);
+				// Make Y Axis
+				points = [(new THREE.Vector3(0, 0, 0)), (new THREE.Vector3(0, 5, 0))];
+				geometry = new THREE.BufferGeometry().setFromPoints(points);
+				material = new THREE.LineBasicMaterial( { color: 0x00ff00 } );
+				const yAxis = new THREE.Line(geometry, material);
+				// Make Z Axis
+				points = [(new THREE.Vector3(0, 0, 0)), (new THREE.Vector3(0, 0, 5))];
+				geometry = new THREE.BufferGeometry().setFromPoints(points);
+				material = new THREE.LineBasicMaterial( { color: 0x0000ff } );
+				const zAxis = new THREE.Line(geometry, material);
+				scene.add(xAxis); scene.add(yAxis); scene.add(zAxis);
+			}
+
+            // Handle resizing of the browser window.
+            function handleResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize(window.innerWidth, window.innerHeight);
+			}
+
+			function movePlane() {
+            	if (plane == null) return;
+				if (planeAngle >= 2 * Math.PI) planeAngle = 0;
+				planeAngle += planeSpeed;
+				plane.rotateOnAxis(new THREE.Vector3(0, 1, 0), -planeSpeed);
+				plane.position.x = planeDistance * Math.cos(planeAngle);
+				plane.position.z = planeDistance * Math.sin(planeAngle);
+			}
+
+			// https://en.wikipedia.org/wiki/Cylindrical_coordinate_system
+			function moveCtrPlane() {
+				if (ctrPlane == null) return;
+				if (ctrPlaneAngle >= 2 * Math.PI) ctrPlaneAngle = 0;
+				ctrPlaneAngle += ctrPlaneSpeed;
+				ctrPlane.rotateOnAxis(new THREE.Vector3(0, 1, 0), ctrPlaneSpeed);
+				ctrPlane.position.x = ctrPlaneDistance * Math.cos(-ctrPlaneAngle);
+				ctrPlane.position.z = ctrPlaneDistance * Math.sin(-ctrPlaneAngle);
+			}
+
+            // Animation loop function. This function is called whenever an update is required.
+			function animate() {
+				requestAnimationFrame(animate);
+
+				movePlane();
+				moveCtrPlane();
+
+				rotateModels(); // Requirement 3
+
+				moveCamera(); // Requirement 5
+
+                // Render the current scene to the screen.
+				renderer.render(scene, camera);
+			}
+
+			// Rotate the cube (Requirement 3): TODO fix gimbal lock dont use cube.rotation.x += ...
+			function rotateModels() {
+				if (rotDirection.xAxis === true) {
+					cube.rotateOnAxis(new THREE.Vector3(1,0,0), rotSpeed); // Rotate cube about the x-axis
+					edges.rotateOnAxis(new THREE.Vector3(1,0,0), rotSpeed); // Rotate edges about the x-axis
+					vertices.rotateOnAxis(new THREE.Vector3(1,0,0), rotSpeed); // Rotate vertices about the x-axis
+					model.rotateOnAxis(new THREE.Vector3(1,0,0), rotSpeed);
+					modelEdges.rotateOnAxis(new THREE.Vector3(1,0,0), rotSpeed);
+					modelVertices.rotateOnAxis(new THREE.Vector3(1,0,0), rotSpeed);
+					outline.rotateOnAxis(new THREE.Vector3(1,0,0), rotSpeed);
+				}
+				if (rotDirection.yAxis === true) {
+					cube.rotateOnAxis(new THREE.Vector3(0,1,0), rotSpeed);
+					edges.rotateOnAxis(new THREE.Vector3(0,1,0), rotSpeed);
+					vertices.rotateOnAxis(new THREE.Vector3(0,1,0), rotSpeed);
+					model.rotateOnAxis(new THREE.Vector3(0,1,0), rotSpeed);
+					modelEdges.rotateOnAxis(new THREE.Vector3(0,1,0), rotSpeed);
+					modelVertices.rotateOnAxis(new THREE.Vector3(0,1,0), rotSpeed);
+					outline.rotateOnAxis(new THREE.Vector3(0,1,0), rotSpeed);
+				}
+				if (rotDirection.zAxis === true) {
+					cube.rotateOnAxis(new THREE.Vector3(0,0,1), rotSpeed);
+					edges.rotateOnAxis(new THREE.Vector3(0,0,1), rotSpeed);
+					vertices.rotateOnAxis(new THREE.Vector3(0,0,1), rotSpeed);
+					model.rotateOnAxis(new THREE.Vector3(0,0,1), rotSpeed);
+					modelEdges.rotateOnAxis(new THREE.Vector3(0,0,1), rotSpeed);
+					modelVertices.rotateOnAxis(new THREE.Vector3(0,0,1), rotSpeed);
+					outline.rotateOnAxis(new THREE.Vector3(0,0,1), rotSpeed);
+				}
+			}
+
+			// Move the camera (Requirement 5)
+			function moveCamera() {
+				var originalPos = camera.getWorldPosition();
+				// Movement along X-axis (right/left):
+				if (camContr.rightVector) camera.translateX(camSpeed); // Move right
+				if (camContr.leftVector) camera.translateX(-camSpeed); // Move left
+				// Movement along Y-axis (up/down):
+				if (camContr.upVector) camera.translateY(camSpeed); // Move up
+				if (camContr.downVector) camera.translateY(-camSpeed); // Move down
+				// Movement along Z-axis (forward/backward):
+				if (camContr.forwardVector) camera.translateZ(-camSpeed); // Move forwards
+				if (camContr.backwardVector) camera.translateZ(camSpeed); // Move backwards
+				var endPos = camera.getWorldPosition();
+				originalPos.sub(endPos); // Subtract the original position from the camera's original position
+				// Now original pos holds the relative change in all dimensions (x,y,z)
+				viewPoint.x -= originalPos.x;
+				viewPoint.y -= originalPos.y;
+				viewPoint.z -= originalPos.z;
+			}
+
+			// Remove all models from the scene
+			function hideAllModels() {
+				scene.remove(cube);
+				scene.remove(edges);
+				scene.remove(vertices);
+
+				scene.remove(model);
+				scene.remove(modelEdges);
+				scene.remove(modelVertices);
+			}
+
+			function resetModelsRotation() {
+				// Stop rotation:
+				rotDirection.xAxis = false;
+				rotDirection.yAxis = false;
+				rotDirection.zAxis = false;
+				// Reset to initial position:
+				// Cube:
+				cube.rotation.set(0,0,0); // Faces
+				edges.rotation.set(0,0,0); // Edges
+				vertices.rotation.set(0,0,0); // Vertices
+				// Model:
+				model.rotation.set(0,0,0); // Faces
+				modelEdges.rotation.set(0,0,0); // Edges
+				modelVertices.rotation.set(0,0,0); // Vertices
+
+				outline.rotation.set(0,0,0);
+			}
+
+			function updateMessage() {
+				const help = document.getElementById("helpMessage");
+				const standard = document.getElementById("standardMessage");
+				if (helpText) {
+					help.classList.remove("hide");
+					standard.innerHTML = "Click [H] to hide the help text.";
+				} else{
+					help.classList.add("hide");
+					standard.innerHTML = "Click [H] to display the help text.";
+				}
+			}
+
+
+			// Handle keyboard presses.
+            function handleKeyDown(event)
+            {
+                switch (event.keyCode) // http://gcctech.org/csc/javascript/javascript_keycodes.htm
+                {
+                    // Render modes.
+                    case 70: // f = face
+						hideAllModels();
+						if (!modelView) {
+							scene.add(cube);
+						} else {
+							scene.add(model);
+						}
+                        break;
+
+                    case 69: // e = edge
+						hideAllModels();
+						if (!modelView) {
+							scene.add(edges);
+						} else {
+							scene.add(modelEdges);
+						}
+                        break;
+
+                    case 86: // v = vertex
+						hideAllModels();
+						if (!modelView) {
+							scene.add(vertices);
+						} else {
+							scene.add(modelVertices);
+						}
+                        break;
+
+					// Rotate cube controls: (Requirement 3)
+					case 49: // Rotate x = 1
+						 rotDirection.xAxis = !rotDirection.xAxis; // Flip boolean value for rotation about x-axis
+						 break;
+					case 50: // Rotate y = 2
+						rotDirection.yAxis = !rotDirection.yAxis; // Flip boolean value for rotation about x-axis
+						break;
+					case 51: // Rotate z = 3
+						rotDirection.zAxis = !rotDirection.zAxis; // Flip boolean value for rotation about x-axis
+						break;
+					case 48: // Reset the models to its initial position and stop rotation = 0
+						resetModelsRotation();
+						break;
+
+					// Camera Controls: (Requirement 5)
+					// X axis:
+					case 65: // Move left = A
+						camContr.leftVector = true;
+						break;
+					case 68: // Move right = D
+						camContr.rightVector = true;
+						break;
+					// Y axis:
+					case 38: // Move up = up Arrow
+						camContr.upVector = true;
+						break;
+					case 40: // Move down = down Arrow
+						camContr.downVector = true;
+						break;
+					// Z axis:
+					case 87: // Move forwards = W
+						camContr.forwardVector = true;
+						break;
+					case 83: // Move backwards = S
+						camContr.backwardVector = true;
+						break;
+					// Reset camera position:
+					case 82: // Reset camera = R
+						camera.position.set(6, 8, 10);
+						camera.lookAt(new THREE.Vector3(0, 0, 0));
+						viewPoint = new THREE.Vector3(0, 0, 0);
+						break;
+					case 77: // Toggle model view
+						modelView = !modelView;
+						hideAllModels();
+						if (!modelView) {
+							scene.add(cube)
+						}
+						scene.add(model);
+						break;
+					case 78: // View bunny inside of cube (edges mode)
+						hideAllModels();
+						scene.add(outline);
+						scene.add(model);
+						break;
+					case 76:
+						lightMode = !lightMode;
+						toggleLighting();
+						break;
+					case 72:
+						helpText = !helpText;
+						updateMessage();
+						break;
+                }
+            }
+
+			function handleKeyRelease(event) {
+				switch (event.keyCode){
+					// Camera Controls:
+					// X axis:
+					case 65: // Move left = A
+						camContr.leftVector = false;
+						break;
+					case 68: // Move right = D
+						camContr.rightVector = false;
+						break;
+					// Y axis
+					case 38: // Move up = up Arrow
+						camContr.upVector = false;
+						break;
+					case 40: // Move down = down Arrow
+						camContr.downVector = false;
+						break;
+					// Z axis:
+					case 87: // Move forwards = W
+						camContr.forwardVector = false;
+						break;
+					case 83: // Move backwards = S
+						camContr.backwardVector = false;
+						break;
+					case 78: // View bunny inside of cube (edges mode)
+						hideAllModels();
+						scene.remove(outline);
+						if (!modelView) {
+							scene.add(cube);
+						} else {
+							scene.add(model);
+						}
+						break;
+				}
+			}
+
+			let dX = 0, dY = 0, // The change in the x and y coordinates of the mouse
+				mouse = {position: new THREE.Vector2(), pressed: false},
+				minZoomDistance = 2;
+
+			// https://andreasrohner.at/posts/Web%20Development/JavaScript/Simple-orbital-camera-controls-for-THREE-js/?fbclid=IwAR13GLUfawu5tk7i8xx3piSFGSDfvpxTS0Kr8T593UWUrB_ZhBal2OuxK5A
+			function orbitControl() {
+				camera.position.sub(viewPoint); // moving the lookat point to the origin
+
+				const rad = camera.position.length();
+				let theta = Math.acos(Math.min(Math.max(camera.position.y / rad, -1), 1)); // polar angle
+				let phi = Math.atan2(camera.position.x, camera.position.z); // equator angle around y-up axis
+
+				phi += dX;
+				theta += dY;
+
+				camera.position.x = rad * Math.sin(theta) * Math.sin(phi);
+				camera.position.y = rad * Math.cos(theta);
+				camera.position.z = rad * Math.sin(theta) * Math.cos(phi);
+
+				camera.position.add(viewPoint);
+
+				// Rotate camera to look at target
+				camera.lookAt(viewPoint);
+			}
+
+			 function handleMouseMovement(e) {
+				e.preventDefault();
+
+				if (!mouse.pressed) return; // Check to see if mouse buttons are being pressed
+
+				const orbitScalar = 0.01; // Scalar for orbiting camera (How fast the rotation happens)
+				// Calculate displacement of mouse to get the total distance we need to orbit about
+				dX = (mouse.position.x - e.offsetX) * orbitScalar;
+				dY = (mouse.position.y - e.offsetY) * orbitScalar;
+
+				orbitControl(); // Orbit to the new dX, dY coordinates
+
+				mouse.position.x = e.offsetX; mouse.position.y = e.offsetY; // Update the current mouse position
+			}
+
+			function handleMouseDown(e) {
+				mouse.position = new THREE.Vector2(e.offsetX, e.offsetY);
+				mouse.pressed = true;
+			}
+
+			function handleMouseRelease () {mouse.pressed = false;}
+
+			function onScroll(e){
+				e.preventDefault();
+				var zoomDistance = e.deltaY * (camSpeed/10);
+				if (camera.position.distanceTo(viewPoint) + zoomDistance > minZoomDistance) camera.translateZ(zoomDistance);
+			}
+		</script>
+	</body>
+</html>
